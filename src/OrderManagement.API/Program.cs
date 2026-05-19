@@ -1,9 +1,13 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using OrderManagement.API.Middlewares;
+using OrderManagement.Application.Services;
 using OrderManagement.Infrastructure.Data;
+using OrderManagement.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,8 +40,32 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
+// ── Services applicatifs ──────────────────────────────────────────────────
+builder.Services.AddScoped<ICategoryService, CategoryService>();
+
 // ── Controllers + validation ──────────────────────────────────────────────
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(e => e.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => kvp.Value!.Errors.Select(x => x.ErrorMessage).ToArray()
+                );
+
+            var errorResponse = new
+            {
+                status = StatusCodes.Status400BadRequest,
+                message = "Validation failed",
+                errors = errors
+            };
+
+            return new BadRequestObjectResult(errorResponse);
+        };
+    });
 
 // ── Swagger / OpenAPI ─────────────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
@@ -79,6 +107,8 @@ builder.Services.AddSwaggerGen(c =>
 
 // ─────────────────────────────────────────────────────────────────────────
 var app = builder.Build();
+
+app.UseMiddleware<ExceptionMiddleware>();
 
 // ── Pipeline HTTP ─────────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
