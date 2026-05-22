@@ -1,12 +1,7 @@
 using System.Text;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using OrderManagement.API.Middlewares;
@@ -48,6 +43,7 @@ builder.Services.AddAuthorization();
 // ── Services applicatifs ──────────────────────────────────────────────────
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IOrderService, ServiceOrder>();
 
 // ── Controllers + validation ──────────────────────────────────────────────
 builder.Services.AddControllers()
