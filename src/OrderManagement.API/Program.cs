@@ -1,4 +1,3 @@
-using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +7,8 @@ using OrderManagement.Application.Services;
 using OrderManagement.Application.Services.OrderService;
 using OrderManagement.Infrastructure.Data;
 using OrderManagement.Infrastructure.Services;
+using Scalar.AspNetCore;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -124,11 +125,13 @@ app.UseMiddleware<ExceptionMiddleware>();
 // ── Pipeline HTTP ─────────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    app.UseSwagger(options =>
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Order Management API v1");
-        c.RoutePrefix = string.Empty; // Swagger à la racine : http://localhost:{port}/
+        options.RouteTemplate = "openapi/{documentName}.json";
+    });
+    app.MapScalarApiReference(options =>
+    {
+        options.WithTitle("Order Management API");
     });
 }
 
