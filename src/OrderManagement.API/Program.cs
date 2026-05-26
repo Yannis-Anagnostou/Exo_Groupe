@@ -47,6 +47,7 @@ builder.Services.AddAuthorization();
 
 // ── Services applicatifs ──────────────────────────────────────────────────
 builder.Services.AddScoped<ICategoryService, CategoryService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 // ── Controllers + validation ──────────────────────────────────────────────
 builder.Services.AddControllers()
