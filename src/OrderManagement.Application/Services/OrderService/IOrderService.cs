@@ -1,3 +1,5 @@
+using OrderManagement.Application.DTOs.OrderDto;
+
 namespace OrderManagement.Application.Services.OrderService;
 
 public interface IOrderService

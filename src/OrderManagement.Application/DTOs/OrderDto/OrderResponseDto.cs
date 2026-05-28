@@ -1,3 +1,5 @@
+using OrderManagement.Domain.Enums;
+
 namespace OrderManagement.Application.DTOs.OrderDto;
 
 public class OrderResponseDto

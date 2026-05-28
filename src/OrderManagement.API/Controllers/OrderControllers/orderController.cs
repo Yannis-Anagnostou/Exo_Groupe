@@ -1,3 +1,12 @@
+using Microsoft.AspNetCore.Mvc;
+using OrderManagement.Application.DTOs.OrderDto;
+using OrderManagement.Application.Exceptions;
+using OrderManagement.Application.Services.OrderService;
+using OrderManagement.Domain.Entities;
+using OrderManagement.Domain.Enums;
+using OrderManagement.Infrastructure.Data;
+using System.Security.Claims;
+
 namespace OrderManagement.API.Controllers.OrderControllers;
 
 [ApiController]
@@ -5,6 +14,7 @@ namespace OrderManagement.API.Controllers.OrderControllers;
 public class OrderController : ControllerBase
 {
     private readonly IOrderService _orderService;
+    private readonly AppDbContext _context;
 
     public OrderController(IOrderService orderService)
     {
@@ -12,47 +22,44 @@ public class OrderController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto, [FromServices] IJwtService jwtService)
+    public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
         try
         {
-            // ✅ Obtenir le UserID depuis le token (authentification)
-            var userId = jwtService.GetUserIdFromToken(HttpContext.Request.Headers["Authorization"]);
+            Claim userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
 
-            // ✅ Créer la commande via le service
+            if (userIdClaim == null)
+                return Unauthorized(new { error = "Token invalide ou manquant." });
+
+            int userId = int.Parse(userIdClaim.Value);
+
             var order = await _orderService.CreateOrderAsync(dto, userId);
-
-            // 201 Created avec location vers la nouvelle ressource
             return CreatedAtAction(nameof(GetOrderById), new { id = order.Id }, order);
         }
         catch (BadRequestException ex)
         {
             return BadRequest(new { error = ex.Message });
         }
-        catch (NotFoundException ex)
+        catch (Exception ex)
         {
-            return NotFound(new { error = ex.Message });
-        }
-    }
+            return StatusCode(500, new { error = "Une erreur est survenue lors de la création de la commande." });
+        } }
 
     [HttpGet]
-    public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders([FromServices] IJwtService jwtService)
+    public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders()
     {
         try
         {
-            var userId = jwtService.GetUserIdFromToken(HttpContext.Request.Headers["Authorization"]);
+            Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+            Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
 
-            // Déterminer si c'est un admin
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
-            if (user == null)
-            {
-                return BadRequest(new { error = "Utilisateur non trouvé." });
-            }
+            if (userIdClaim == null || roleClaim == null)
+                return Unauthorized(new { error = "Token invalide ou manquant." });
 
-            var isAdmin = user.Role == UserRole.Admin;
+            int userId = int.Parse(userIdClaim.Value);
+            bool isAdmin = roleClaim.Value == "Admin";
 
             var orders = await _orderService.GetAllOrdersAsync(userId, isAdmin);
-
             return Ok(orders);
         }
         catch (BadRequestException ex)
@@ -62,34 +69,43 @@ public class OrderController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des commandes." });
-        }
+        } 
     }
 
-    [HttpGet("{id}")]
-    public async Task<ActionResult<OrderResponseDto>> GetOrderById(int id, [FromServices] IJwtService jwtService)
-    {
-        try
+
+
+
+        [HttpGet("{id}")]
+        public async Task<ActionResult<OrderResponseDto>> GetOrderById(int id)
         {
-            var userId = jwtService.GetUserIdFromToken(HttpContext.Request.Headers["Authorization"]);
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
-            if (user == null)
+            try
             {
-                return BadRequest(new { error = "Utilisateur non trouvé." });
+                Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+                Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+
+                if (userIdClaim == null || roleClaim == null)
+                    return Unauthorized(new { error = "Token invalide ou manquant." });
+
+                int userId = int.Parse(userIdClaim.Value);
+                bool isAdmin = roleClaim.Value == "Admin";
+
+                var order = await _orderService.GetOrderByIdAsync(id, userId, isAdmin);
+                return Ok(order);
             }
-
-            var isAdmin = user.Role == UserRole.Admin;
-
-            var order = await _orderService.GetOrderByIdAsync(id, userId, isAdmin);
-
-            return Ok(order);
+            catch (BadRequestException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (NotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération de la commande." });
+            }
         }
-        catch (BadRequestException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (NotFoundException ex)
-        {
-            return NotFound(new { error = ex.Message });
-        }
-    }
-}
+    } 
+
+
+
