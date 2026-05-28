@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OrderManagement.Application.DTOs.OrderDto;
 using OrderManagement.Application.Exceptions;
@@ -11,6 +12,7 @@ namespace OrderManagement.API.Controllers.OrderControllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[Authorize]
 public class OrderController : ControllerBase
 {
     private readonly IOrderService _orderService;
@@ -46,6 +48,7 @@ public class OrderController : ControllerBase
         } }
 
     [HttpGet]
+    [Authorize (Roles ="admin")]
     public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders()
     {
         try

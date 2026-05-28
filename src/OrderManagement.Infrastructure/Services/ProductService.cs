@@ -5,7 +5,7 @@ using OrderManagement.Infrastructure.Data;
 
 namespace OrderManagement.Application.Services
 {
-    public class ProductService(AppDbContext _context)
+    public class ProductService(AppDbContext _context) : IProductService
     {
         public async Task<List<Product>> GetAllAsync() =>
             await _context.Products.AsNoTracking().ToListAsync();
