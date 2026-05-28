@@ -1,13 +1,9 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using OrderManagement.API.Middlewares;
+using Microsoft.OpenApi.Models;
 using OrderManagement.Application.Services;
-using OrderManagement.Application.Services.OrderService;
 using OrderManagement.Infrastructure.Data;
-using OrderManagement.Infrastructure.Services;
-using Scalar.AspNetCore;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -41,86 +37,52 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// ── Services applicatifs ──────────────────────────────────────────────────
-builder.Services.AddScoped<ICategoryService, CategoryService>();
-builder.Services.AddScoped<IAuthService, AuthService>();
-builder.Services.AddScoped<IOrderService, ServiceOrder>();
-
 // ── Controllers + validation ──────────────────────────────────────────────
-builder.Services.AddControllers()
-    .ConfigureApiBehaviorOptions(options =>
-    {
-        options.InvalidModelStateResponseFactory = context =>
-        {
-            var errors = context.ModelState
-                .Where(e => e.Value?.Errors.Count > 0)
-                .ToDictionary(
-                    kvp => kvp.Key,
-                    kvp => kvp.Value!.Errors.Select(x => x.ErrorMessage).ToArray()
-                );
-
-            var errorResponse = new
-            {
-                status = StatusCodes.Status400BadRequest,
-                message = "Validation failed",
-                errors = errors
-            };
-
-            return new BadRequestObjectResult(errorResponse);
-        };
-    });
+builder.Services.AddControllers();
 
 // ── Swagger / OpenAPI ─────────────────────────────────────────────────────
-// ── Swagger / OpenAPI  ← REMPLACER PAR CECI ──────────────────────────────
-builder.Services.AddEndpointsApiExplorer(); // toujours nécessaire pour les controllers
-builder.Services.AddOpenApi("v1", options =>
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
 {
-    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    c.SwaggerDoc("v1", new OpenApiInfo
     {
-        document.Info = new Microsoft.OpenApi.OpenApiInfo
+        Title       = "Order Management API",
+        Version     = "v1",
+        Description = "API REST de gestion de commandes — ASP.NET Core 10"
+    });
+
+    // Bouton Authorize dans Swagger UI pour le token JWT
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name         = "Authorization",
+        Type         = SecuritySchemeType.Http,
+        Scheme       = "Bearer",
+        BearerFormat = "JWT",
+        In           = ParameterLocation.Header,
+        Description  = "Entrez votre token JWT : Bearer {token}"
+    });
+
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
         {
-            Title = "Order Management API",
-            Version = "v1",
-            Description = "API REST de gestion de commandes — ASP.NET Core 10"
-        };
-
-        // Schéma de sécurité Bearer
-        document.Components ??= new Microsoft.OpenApi.OpenApiComponents();
-        document.Components.SecuritySchemes ??=
-            new Dictionary<string, Microsoft.OpenApi.IOpenApiSecurityScheme>();
-
-        document.Components.SecuritySchemes["Bearer"] =
-            new Microsoft.OpenApi.OpenApiSecurityScheme
+            new OpenApiSecurityScheme
             {
-                Type = Microsoft.OpenApi.SecuritySchemeType.Http,
-                Scheme = "bearer",   // lowercase obligatoire
-                BearerFormat = "JWT",
-                Description = "Entrez votre token JWT (sans le préfixe 'Bearer ')"
-            };
-
-        // Appliquer le cadenas sur toutes les opérations
-        if (document.Paths is not null)
-            foreach (var path in document.Paths.Values)
-                if (path.Operations is not null)
-                    foreach (var operation in path.Operations.Values)
-                    {
-                        operation.Security ??= new List<Microsoft.OpenApi.OpenApiSecurityRequirement>();
-                        operation.Security.Add(
-                            new Microsoft.OpenApi.OpenApiSecurityRequirement
-                            {
-                                [new Microsoft.OpenApi.OpenApiSecuritySchemeReference(
-                                    "Bearer", document)] = []
-                            });
-                    }
-
-        return Task.CompletedTask;
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id   = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
     });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-var app = builder.Build();
+builder.Services.AddScoped<ProductService>();
 
-app.UseMiddleware<ExceptionMiddleware>();
+
+var app = builder.Build();
 
 // ── Pipeline HTTP ─────────────────────────────────────────────────────────
 if (app.Environment.IsDevelopment())
