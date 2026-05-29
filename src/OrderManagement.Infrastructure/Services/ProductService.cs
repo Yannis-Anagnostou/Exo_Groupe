@@ -8,10 +8,11 @@ namespace OrderManagement.Application.Services
     public class ProductService(AppDbContext _context) : IProductService
     {
         public async Task<List<Product>> GetAllAsync() =>
-            await _context.Products.AsNoTracking().ToListAsync();
+            await _context.Products.AsNoTracking().Include(p => p.Category).ToListAsync();
 
         public async Task<Product> GetByIdAsync(int id) =>
             await _context.Products.AsNoTracking()
+                .Include(p => p.Category)
                 .FirstOrDefaultAsync(p => p.Id == id)
                 ?? throw new KeyNotFoundException($"Product {id} not found");
 
@@ -23,6 +24,7 @@ namespace OrderManagement.Application.Services
                 Description = newProduct.Description,
                 Price = newProduct.Price,
                 Stock = newProduct.Stock,
+                CategoryId = newProduct.CategoryId,
             };
 
             _context.Products.Add(product);
@@ -32,7 +34,9 @@ namespace OrderManagement.Application.Services
 
         public async Task<Product> UpdateAsync(UpdateProductDTOs updatedProduct, int id)
         {
-            var product = await _context.Products.FindAsync(id)
+            var product = await _context.Products
+                .Include(p => p.Category)
+                .FirstOrDefaultAsync(p => p.Id == id)
                 ?? throw new KeyNotFoundException($"Product {id} not found");
 
             product.Name = updatedProduct.Name;
@@ -44,7 +48,7 @@ namespace OrderManagement.Application.Services
             return product;
         }
 
-        public async Task Delete(int id)
+        public async Task DeleteAsync(int id)
         {
             var product = await _context.Products.FindAsync(id)
                 ?? throw new KeyNotFoundException($"Product {id} not found");

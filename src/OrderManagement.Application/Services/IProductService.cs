@@ -16,6 +16,6 @@ namespace OrderManagement.Application.Services
 
         Task<Product> UpdateAsync(UpdateProductDTOs updatedProduct, int id);
 
-        Task Delete(int id);
+        Task DeleteAsync(int id);
     }
 }
