@@ -16,12 +16,15 @@ namespace OrderManagement.API.Controllers.OrderControllers;
 public class OrderController : ControllerBase
 {
     private readonly IOrderService _orderService;
-    private readonly AppDbContext _context;
+    
 
+    // Un seul constructeur avec tout dedans
     public OrderController(IOrderService orderService)
     {
         _orderService = orderService;
+    
     }
+
 
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
@@ -34,6 +37,8 @@ public class OrderController : ControllerBase
             return Unauthorized(new { error = "Token invalide ou manquant." });
 
         int userId = int.Parse(userIdClaim.Value);
+
+        
 
         var order = await _orderService.CreateOrderAsync(dto, userId);
         return CreatedAtAction(nameof(GetOrderById), new { id = order.Id }, order);
@@ -62,7 +67,9 @@ public class OrderController : ControllerBase
             int userId = int.Parse(userIdClaim.Value);
             bool isAdmin = roleClaim.Value == "Admin";
 
-            var orders = await _orderService.GetAllOrdersAsync(userId, isAdmin);
+       
+
+        var orders = await _orderService.GetAllOrdersAsync(userId, isAdmin);
             return Ok(orders);
         //}
         //catch (BadRequestException ex)
@@ -81,8 +88,8 @@ public class OrderController : ControllerBase
         [HttpGet("{id}")]
         public async Task<ActionResult<OrderResponseDto>> GetOrderById(int id)
         {
-            try
-            {
+            //try
+            //{
                 Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
                 Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
 
@@ -92,21 +99,23 @@ public class OrderController : ControllerBase
                 int userId = int.Parse(userIdClaim.Value);
                 bool isAdmin = roleClaim.Value == "Admin";
 
-                var order = await _orderService.GetOrderByIdAsync(id, userId, isAdmin);
+           
+
+            var order = await _orderService.GetOrderByIdAsync(id, userId, isAdmin);
                 return Ok(order);
-            }
-            catch (BadRequestException ex)
-            {
-                return BadRequest(new { error = ex.Message });
-            }
-            catch (NotFoundException ex)
-            {
-                return NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération de la commande." });
-            }
+            //}
+            //catch (BadRequestException ex)
+            //{
+            //    return BadRequest(new { error = ex.Message });
+            //}
+            //catch (NotFoundException ex)
+            //{
+            //    return NotFound(new { error = ex.Message });
+            //}
+            //catch (Exception ex)
+            //{
+            //    return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération de la commande." });
+            //}
         }
     } 
 
