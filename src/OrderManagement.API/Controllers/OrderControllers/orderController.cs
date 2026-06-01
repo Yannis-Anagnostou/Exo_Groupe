@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OrderManagement.Application.DTOs.OrderDto;
 using OrderManagement.Application.Exceptions;
 using OrderManagement.Application.Services.OrderService;
@@ -27,6 +28,7 @@ public class OrderController : ControllerBase
 
 
     [HttpPost]
+    [EnableRateLimiting("add")]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
         //try

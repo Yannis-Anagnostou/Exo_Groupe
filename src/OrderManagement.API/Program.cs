@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OrderManagement.API.Middlewares;
@@ -8,6 +9,7 @@ using OrderManagement.Infrastructure.Data;
 using OrderManagement.Infrastructure.Services;
 using Scalar.AspNetCore;
 using System.Text;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,6 +49,40 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
+//-------- Logger-----------------------
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Information);
+
+//------Rate Limiter------
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("auth", httpContext =>
+         RateLimitPartition.GetFixedWindowLimiter(
+             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+             factory: _ => new FixedWindowRateLimiterOptions
+             {
+                 PermitLimit = 3,
+                 Window = TimeSpan.FromHours(12),
+                 QueueLimit = 0
+             }
+         ));
+
+    options.AddPolicy("add", httpContext =>
+         RateLimitPartition.GetFixedWindowLimiter(
+             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+             factory: _ => new FixedWindowRateLimiterOptions
+             {
+                 PermitLimit = 5,
+                 Window = TimeSpan.FromMinutes(15),
+                 QueueLimit = 0
+             }
+         ));
+
+    
+});
+
+
 // ── Services ──────────────────────────────────────────────────────────────
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
@@ -71,10 +107,11 @@ if (app.Environment.IsDevelopment())
         options.WithTitle("Order Management API");
     });
 }
+app.UseMiddleware<ExceptionMiddleware>();
+app.UseMiddleware<RateLimiterMiddelware>();
+app.UseRateLimiter();
 
 app.UseHttpsRedirection();
-
-app.UseMiddleware<ExceptionMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();
