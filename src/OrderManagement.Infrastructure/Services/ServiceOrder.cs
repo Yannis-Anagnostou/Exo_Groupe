@@ -148,7 +148,7 @@ public class ServiceOrder : IOrderService
 
         if (!isAdmin && order.UserId != userId)
         {
-            _logger.LogWarning("$[ACCÈS REFUSÉ] userId {ID} → orderId {OrderId}", userId, id);
+            _logger.LogWarning("[ACCÈS REFUSÉ] userId {ID} → orderId {OrderId}", userId, id);
             throw new BadRequestException("Vous n'avez pas l'autorisation de voir cette commande.");
         }
 

@@ -1,11 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using OrderManagement.Application.DTOs.Products;
 using OrderManagement.Domain.Entities;
 using OrderManagement.Infrastructure.Data;
 
 namespace OrderManagement.Application.Services
 {
-    public class ProductService(AppDbContext _context) : IProductService
+    public class ProductService(AppDbContext _context, ILogger<ProductService> _logger) : IProductService
     {
         public async Task<List<Product>> GetAllAsync() =>
             await _context.Products.AsNoTracking().Include(p => p.Category).ToListAsync();
@@ -29,6 +30,9 @@ namespace OrderManagement.Application.Services
 
             _context.Products.Add(product);
             await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Produit créé — productId {ProductId} | nom {Name}", product.Id, product.Name);
+
             return product;
         }
 
@@ -45,6 +49,10 @@ namespace OrderManagement.Application.Services
             product.Stock = updatedProduct.Stock;
 
             await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Produit modifié — productId {ProductId} | nouveau stock {Stock}",
+            product.Id, product.Stock);
+
             return product;
         }
 
@@ -55,6 +63,9 @@ namespace OrderManagement.Application.Services
 
             _context.Products.Remove(product);
             await _context.SaveChangesAsync();
+
+            _logger.LogWarning("Produit supprimé — productId {ProductId} | nom {Name}",
+            id, product.Name);
         }
     }
 }

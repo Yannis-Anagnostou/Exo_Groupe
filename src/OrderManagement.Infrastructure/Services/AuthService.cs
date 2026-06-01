@@ -1,9 +1,7 @@
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using OrderManagement.Application.DTOs.Auth;
 using OrderManagement.Application.Exceptions;
@@ -11,6 +9,9 @@ using OrderManagement.Application.Services;
 using OrderManagement.Domain.Entities;
 using OrderManagement.Domain.Enums;
 using OrderManagement.Infrastructure.Data;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
 namespace OrderManagement.Infrastructure.Services;
 
@@ -19,11 +20,13 @@ public class AuthService : IAuthService
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly PasswordHasher<User> _passwordHasher = new();
+    private readonly ILogger<AuthService> _logger;
 
-    public AuthService(AppDbContext context, IConfiguration configuration)
+    public AuthService(AppDbContext context, IConfiguration configuration, ILogger<AuthService> logger)
     {
         _context = context;
         _configuration = configuration;
+        _logger = logger;
     }
 
     public async Task<string> RegisterAsync(RegisterDto registerDto)
@@ -31,6 +34,7 @@ public class AuthService : IAuthService
         var exists = await _context.Users.AnyAsync(u => u.Email == registerDto.Email);
         if (exists)
         {
+            _logger.LogWarning("Inscription refusée — email déjà utilisé {Email}", registerDto.Email);
             throw new BadRequestException("Un utilisateur avec cet email existe déjà.");
         }
 
@@ -46,6 +50,9 @@ public class AuthService : IAuthService
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
 
+        _logger.LogInformation("Nouvel utilisateur créé — userId {UserId}", user.Id);
+
+
         return GenerateJwtToken(user);
     }
 
@@ -54,14 +61,18 @@ public class AuthService : IAuthService
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == loginDto.Email);
         if (user == null)
         {
+            _logger.LogWarning("Échec login — email inconnu");
             throw new BadRequestException("Identifiants de connexion invalides.");
         }
 
         var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, loginDto.Password);
         if (result == PasswordVerificationResult.Failed)
         {
+            _logger.LogWarning("Échec login — mauvais mot de passe — userId {UserId}", user.Id);
             throw new BadRequestException("Identifiants de connexion invalides.");
         }
+
+        _logger.LogInformation("Login réussi — userId {UserId} | role {Role}", user.Id, user.Role);
 
         return GenerateJwtToken(user);
     }
@@ -71,12 +82,14 @@ public class AuthService : IAuthService
         var email = principal.FindFirst(ClaimTypes.Email)?.Value;
         if (string.IsNullOrEmpty(email))
         {
+            _logger.LogWarning("GetCurrentUser — token sans email valide");
             throw new BadRequestException("Token d'authentification invalide ou expiré.");
         }
 
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         if (user == null)
         {
+            _logger.LogWarning("GetCurrentUser — utilisateur introuvable — userId {UserId}", email);
             throw new NotFoundException("Utilisateur introuvable.");
         }
 
