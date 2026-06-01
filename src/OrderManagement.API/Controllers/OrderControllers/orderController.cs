@@ -28,7 +28,7 @@ public class OrderController : ControllerBase
 
 
     [HttpPost]
-    [EnableRateLimiting("add")]
+    [EnableRateLimiting(RateLimitPolicies.Add)]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
         //try

@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OrderManagement.Application.DTOs.Products;
 using OrderManagement.Application.Services;
 
@@ -36,6 +37,7 @@ namespace OrderManagement.API.Controllers
 
         [HttpPost]
         [Authorize(Roles = "Admin")]
+        [EnableRateLimiting("add")]
         [ProducesResponseType(StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status401Unauthorized)]

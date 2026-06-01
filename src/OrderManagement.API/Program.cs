@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using OrderManagement.API.Middlewares;
 using OrderManagement.Application.Services;
 using OrderManagement.Application.Services.OrderService;
+using OrderManagement.Domain.Entities;
 using OrderManagement.Infrastructure.Data;
 using OrderManagement.Infrastructure.Services;
 using Scalar.AspNetCore;
@@ -57,18 +58,18 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 //------Rate Limiter------
 builder.Services.AddRateLimiter(options =>
 {
-    options.AddPolicy("auth", httpContext =>
+    options.AddPolicy(RateLimitPolicies.Auth, httpContext =>
          RateLimitPartition.GetFixedWindowLimiter(
              partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
              factory: _ => new FixedWindowRateLimiterOptions
              {
                  PermitLimit = 3,
-                 Window = TimeSpan.FromHours(12),
+                 Window = TimeSpan.FromHours(1),
                  QueueLimit = 0
              }
          ));
 
-    options.AddPolicy("add", httpContext =>
+    options.AddPolicy(RateLimitPolicies.Add, httpContext =>
          RateLimitPartition.GetFixedWindowLimiter(
              partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
              factory: _ => new FixedWindowRateLimiterOptions
@@ -79,7 +80,23 @@ builder.Services.AddRateLimiter(options =>
              }
          ));
 
-    
+    options.OnRejected = async (context, token) =>
+    {
+        var ip = context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var path = context.HttpContext.Request.Path;
+
+        var logger = context.HttpContext.RequestServices
+            .GetRequiredService<ILogger<Program>>();
+
+        logger.LogWarning("Rate limit atteint — IP {Ip} | endpoint {Path}", ip, path);
+
+        context.HttpContext.Response.StatusCode = 429;
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            error = "Trop de tentatives. Réessayez plus tard."
+        }, token);
+
+    };
 });
 
 
@@ -108,7 +125,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 app.UseMiddleware<ExceptionMiddleware>();
-app.UseMiddleware<RateLimiterMiddelware>();
+
 app.UseRateLimiter();
 
 app.UseHttpsRedirection();

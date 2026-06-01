@@ -21,6 +21,7 @@ public class ServiceOrder : IOrderService
         _logger = logger;
     }
     public async Task<OrderResponseDto> CreateOrderAsync(CreateOrderDto dto, int userId)
+     
     {
         // ── Validation : commande non vide ────────────────────────────────────
         if (dto.Items == null || dto.Items.Count == 0)
