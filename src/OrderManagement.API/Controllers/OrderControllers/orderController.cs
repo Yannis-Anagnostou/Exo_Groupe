@@ -26,33 +26,33 @@ public class OrderController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
-        try
-        {
-            Claim userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+        //try
+        //{
+        Claim userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
 
-            if (userIdClaim == null)
-                return Unauthorized(new { error = "Token invalide ou manquant." });
+        if (userIdClaim == null)
+            return Unauthorized(new { error = "Token invalide ou manquant." });
 
-            int userId = int.Parse(userIdClaim.Value);
+        int userId = int.Parse(userIdClaim.Value);
 
-            var order = await _orderService.CreateOrderAsync(dto, userId);
-            return CreatedAtAction(nameof(GetOrderById), new { id = order.Id }, order);
-        }
-        catch (BadRequestException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = "Une erreur est survenue lors de la création de la commande." });
-        } }
-
+        var order = await _orderService.CreateOrderAsync(dto, userId);
+        return CreatedAtAction(nameof(GetOrderById), new { id = order.Id }, order);
+        //}
+        //catch (BadRequestException ex)
+        //{
+        //    return BadRequest(new { error = ex.Message });
+        //}
+        //catch (Exception ex)
+        //{
+        //    return StatusCode(500, new { error = "Une erreur est survenue lors de la création de la commande." });
+        //} }
+    }
     [HttpGet]
-    [Authorize (Roles ="admin")]
+    //[Authorize (Roles ="admin")]
     public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders()
     {
-        try
-        {
+        //try
+        //{
             Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
             Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
 
@@ -64,15 +64,15 @@ public class OrderController : ControllerBase
 
             var orders = await _orderService.GetAllOrdersAsync(userId, isAdmin);
             return Ok(orders);
-        }
-        catch (BadRequestException ex)
-        {
-            return BadRequest(new { error = ex.Message });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des commandes." });
-        } 
+        //}
+        //catch (BadRequestException ex)
+        //{
+        //    return BadRequest(new { error = ex.Message });
+        //}
+        //catch (Exception ex)
+        //{
+        //    return StatusCode(500, new { error = "Une erreur est survenue lors de la récupération des commandes." });
+        //} 
     }
 
 
