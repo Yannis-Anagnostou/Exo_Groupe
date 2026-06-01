@@ -1,0 +1,1069 @@
+# Fiche cours — Optimisation & sécurité avancée
+---
+## 1. Constat général
+
+Déjà, votre projet a bien progressé :
+
+- l’authentification JWT est configurée ;
+- les endpoints de commandes sont protégés par `[Authorize]` ;
+- le token contient des claims : identifiant utilisateur, email, username, rôle ;
+- le service de commande vérifie le stock ;
+- les lignes de commande sont créées ;
+- le total est recalculé côté backend ;
+- un middleware d’erreurs existe et est branché.
+
+>C'est une très bonne avancée, mais il reste encore quelques points à revoir.
+
+---
+
+# Partie A — Erreur principale à étudier
+
+## 2. Erreur principale : lire directement les claims dans chaque action
+
+Dans `OrderController`, on retrouve plusieurs fois ce genre de logique :
+
+```csharp
+Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+
+if (userIdClaim == null || roleClaim == null)
+    return Unauthorized(new { error = "Token invalide ou manquant." });
+
+int userId = int.Parse(userIdClaim.Value);
+bool isAdmin = roleClaim.Value == "Admin";
+```
+
+À première vue, ce code semble logique :
+
+- on récupère l’id de l’utilisateur connecté ;
+- on récupère son rôle ;
+- on décide s’il peut voir toutes les commandes ou seulement les siennes.
+
+Mais cette correction est bancale si on s’arrête à `int.TryParse()`.
+
+Le vrai sujet n’est pas seulement : “éviter que `int.Parse()` plante”.
+
+Le vrai sujet est :
+
+> À quel endroit de l’application doit-on transformer un JWT en identité métier fiable ?
+
+---
+
+## 3. Ce qu’est réellement un claim
+
+Quand un utilisateur se connecte, l’API génère un JWT dans `AuthService`.
+
+**En simple, quelque chose comme ça :**
+
+```csharp
+var claims = new[]
+{
+    new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+    new Claim(ClaimTypes.Email, user.Email),
+    new Claim(ClaimTypes.Name, user.Username),
+    new Claim(ClaimTypes.Role, user.Role.ToString())
+};
+```
+
+Un claim est une **information déclarée dans le token**.
+
+Exemples :
+
+- “cet utilisateur a l’id 12” ;
+- “cet utilisateur a l’email x@y.com” ;
+- “cet utilisateur a le rôle Admin”.
+
+Mais attention :
+
+> Un claim n’est pas automatiquement une règle métier. C’est une donnée d’identité.
+
+L’API doit ensuite décider comment elle utilise cette identité.
+
+---
+
+## 4. Le cycle réel d’une requête authentifiée
+
+Quand une requête arrive avec un header :
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+ASP.NET Core fait plusieurs choses avant d’appeler le contrôleur :
+
+1. il lit le token ;
+2. il vérifie la signature avec la clé JWT ;
+3. il vérifie l’expiration ;
+4. il vérifie l’issuer ;
+5. il vérifie l’audience ;
+6. si tout est valide, il crée un `ClaimsPrincipal` ;
+7. ce `ClaimsPrincipal` devient disponible via `HttpContext.User` ou simplement `User` dans le contrôleur.
+
+>Donc dans une action protégée par `[Authorize]`, on n’est pas censé “revalider le token à la main”.
+>
+>**On doit plutôt utiliser proprement l’identité déjà construite par le framework.**
+
+---
+
+## 5. Pourquoi le code actuel est fragile
+
+### Problème 1 — Duplication
+
+Le même code est répété dans plusieurs actions :
+
+- `CreateOrder` ;
+- `GetAllOrders` ;
+- `GetOrderById`.
+
+Si demain on change le nom du claim, il faudra corriger partout.
+
+---
+
+### Problème 2 — Mélange des responsabilités
+
+Le contrôleur fait trop de choses :
+
+- il reçoit la requête HTTP ;
+- il lit les claims ;
+- il parse l’id ;
+- il déduit le rôle ;
+- il décide si l’utilisateur est admin ;
+- il appelle le service.
+
+Un contrôleur devrait rester un orchestrateur HTTP, pas contenir la logique d’identité.
+
+---
+
+### Problème 3 — Mauvaise séparation entre authentification et autorisation
+
+Il faut distinguer :
+
+- **Authentification** : qui est l’utilisateur ?
+- **Autorisation** : a-t-il le droit de faire cette action ?
+
+`[Authorize]` sans paramètre garantit surtout que l’utilisateur est authentifié.
+
+`[Authorize(Roles = "Admin")]` ajoute une règle d’autorisation basée sur le rôle.
+
+Mais une règle comme :
+
+> un utilisateur peut voir uniquement ses propres commandes, sauf s’il est admin
+
+n’est pas une simple règle de rôle. C’est une règle métier d’ownership.
+
+Elle doit être exprimée clairement dans le code.
+
+---
+
+### Problème 4 — Mauvais code HTTP pour l’accès interdit
+
+Dans `ServiceOrder.GetOrderByIdAsync`, on trouve :
+
+```csharp
+if (!isAdmin && order.UserId != userId)
+{
+    throw new BadRequestException("Vous n'avez pas l'autorisation de voir cette commande.");
+}
+```
+
+Ce n’est pas une mauvaise requête (`400 Bad Request`).
+
+La requête est syntaxiquement correcte, l’utilisateur est connecté, la commande existe peut-être, mais il n’a pas le droit de la consulter.
+
+Le bon statut HTTP est :
+
+```http
+403 Forbidden
+```
+
+Différence importante :
+
+| Code | Signification |
+|---|---|
+| 401 Unauthorized | L’utilisateur n’est pas authentifié ou le token est absent/invalide |
+| 403 Forbidden | L’utilisateur est authentifié, mais n’a pas le droit |
+| 404 Not Found | La ressource demandée n’existe pas |
+| 400 Bad Request | Les données envoyées sont invalides |
+| 500 Internal Server Error | Erreur serveur non prévue |
+
+---
+
+# Partie B — Correction propre et pédagogique
+
+## 6. Mauvaise correction : remplacer seulement `int.Parse()` par `TryParse()`
+
+Une correction minimale serait :
+
+```csharp
+if (!int.TryParse(userIdClaim.Value, out int userId))
+    return Unauthorized();
+```
+
+C’est mieux que `int.Parse()`, mais ce n’est pas une bonne correction d’architecture.
+
+Pourquoi ?
+
+Parce que :
+
+- la duplication reste ;
+- le contrôleur continue de connaître les détails des claims ;
+- chaque action doit refaire la même plomberie ;
+- la logique d’identité n’est pas testable facilement ;
+- l’autorisation métier reste dispersée.
+
+On a corrigé un symptôme, pas le problème.
+
+---
+
+## 7. La vraie correction : créer un service d’utilisateur courant
+
+Il faudrait que vous puissiez créer une abstraction :
+
+```csharp
+ICurrentUserService
+```
+
+Son rôle :
+
+> Transformer le `ClaimsPrincipal` de la requête HTTP en identité applicative simple et fiable.
+
+Le contrôleur ne devrait pas avoir besoin de savoir que l’id vient de `ClaimTypes.NameIdentifier`.
+
+Il devrait pouvoir écrire :
+
+```csharp
+var currentUser = _currentUserService.GetCurrentUser();
+```
+
+---
+
+## 8. Étape 1 — Créer un modèle simple pour l’utilisateur connecté
+
+Créer par exemple :
+
+`OrderManagement.Application/Security/CurrentUser.cs`
+
+```csharp
+namespace OrderManagement.Application.Security;
+
+public static class Roles
+{
+    public const string Admin = "Admin";
+    public const string User = "User";
+}
+
+public sealed class CurrentUser
+{
+    public int Id { get; init; }
+    public string Email { get; init; } = string.Empty;
+    public string Role { get; init; } = string.Empty;
+
+    public bool IsAdmin => Role == Roles.Admin;
+}
+```
+
+Pourquoi faire une classe dédiée ?
+
+Parce que l’application n’a pas besoin de manipuler des `Claim` partout.
+
+Un `Claim` est un détail technique du protocole d’authentification.
+
+Le métier, lui, a besoin de savoir :
+
+- quel est l’id de l’utilisateur ;
+- quel est son rôle ;
+- éventuellement son email.
+
+---
+
+## 9. Étape 2 — Créer une exception dédiée à l’authentification
+
+Créer :
+
+`OrderManagement.Application/Exceptions/UnauthorizedException.cs`
+
+```csharp
+namespace OrderManagement.Application.Exceptions;
+
+public class UnauthorizedException : Exception
+{
+    public UnauthorizedException(string message) : base(message)
+    {
+    }
+}
+```
+
+Créer aussi :
+
+`OrderManagement.Application/Exceptions/ForbiddenException.cs`
+
+```csharp
+namespace OrderManagement.Application.Exceptions;
+
+public class ForbiddenException : Exception
+{
+    public ForbiddenException(string message) : base(message)
+    {
+    }
+}
+```
+
+Pourquoi ?
+
+Parce qu’une API doit distinguer clairement :
+
+- utilisateur non connecté ou token invalide : `401` ;
+- utilisateur connecté mais pas autorisé : `403`.
+
+---
+
+## 10. Étape 3 — Créer l’interface
+
+Créer :
+
+`OrderManagement.Application/Security/ICurrentUserService.cs`
+
+```csharp
+namespace OrderManagement.Application.Security;
+
+public interface ICurrentUserService
+{
+    CurrentUser GetCurrentUser();
+}
+```
+
+Pourquoi dans Application ?
+
+Parce que les services applicatifs peuvent avoir besoin de connaître l’utilisateur courant sans dépendre directement de `HttpContext`.
+
+Attention cependant : l’implémentation concrète utilisera `IHttpContextAccessor`, donc elle doit rester côté API ou Infrastructure selon votre découpage.
+
+---
+
+## 11. Étape 4 — Implémenter le service côté API
+
+Créer :
+
+`OrderManagement.API/Security/CurrentUserService.cs`
+
+```csharp
+using System.Security.Claims;
+using OrderManagement.Application.Exceptions;
+using OrderManagement.Application.Security;
+
+namespace OrderManagement.API.Security;
+
+public class CurrentUserService : ICurrentUserService
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public CurrentUserService(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    public CurrentUser GetCurrentUser()
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+
+        if (user?.Identity?.IsAuthenticated != true)
+        {
+            throw new UnauthorizedException("Utilisateur non authentifié.");
+        }
+
+        var idValue = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        var email = user.FindFirstValue(ClaimTypes.Email) ?? string.Empty;
+        var role = user.FindFirstValue(ClaimTypes.Role);
+
+        if (!int.TryParse(idValue, out var userId))
+        {
+            throw new UnauthorizedException("Le token ne contient pas un identifiant utilisateur valide.");
+        }
+
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            throw new UnauthorizedException("Le token ne contient pas de rôle utilisateur valide.");
+        }
+
+        return new CurrentUser
+        {
+            Id = userId,
+            Email = email,
+            Role = role
+        };
+    }
+}
+```
+
+Ici, `TryParse()` n’est qu’un détail.
+
+La vraie correction est la centralisation :
+
+- un seul endroit lit les claims ;
+- un seul endroit décide si le token contient les informations minimales ;
+- les contrôleurs n’ont plus à connaître `ClaimTypes.NameIdentifier` ;
+- le code devient testable et lisible.
+
+---
+
+## 12. Étape 5 — Déclarer le service dans `Program.cs`
+
+Ajouter :
+
+```csharp
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+```
+
+Pourquoi `AddHttpContextAccessor()` ?
+
+Parce qu’un service injecté n’a pas directement accès à `HttpContext`.
+
+`IHttpContextAccessor` permet de récupérer le contexte HTTP courant de manière encadrée.
+
+---
+
+## 13. Étape 6 — Mettre à jour le middleware d’erreurs
+
+Le middleware actuel gère `BadRequestException` et `NotFoundException`.
+
+Il faut ajouter les nouveaux cas :
+
+```csharp
+catch (UnauthorizedException ex)
+{
+    await HandleExceptionAsync(httpContext, HttpStatusCode.Unauthorized, ex.Message);
+}
+catch (ForbiddenException ex)
+{
+    await HandleExceptionAsync(httpContext, HttpStatusCode.Forbidden, ex.Message);
+}
+```
+
+Le middleware devient le point unique de transformation :
+
+```csharp
+Exception métier/application -> réponse HTTP propre
+```
+
+C’est exactement le rôle d’un middleware d’erreurs.
+
+---
+
+## 14. Étape 7 — Simplifier le contrôleur
+
+Avant :
+
+```csharp
+Claim? userIdClaim = HttpContext.User.FindFirst(ClaimTypes.NameIdentifier);
+Claim? roleClaim = HttpContext.User.FindFirst(ClaimTypes.Role);
+
+if (userIdClaim == null || roleClaim == null)
+    return Unauthorized(new { error = "Token invalide ou manquant." });
+
+int userId = int.Parse(userIdClaim.Value);
+bool isAdmin = roleClaim.Value == "Admin";
+
+var orders = await _orderService.GetAllOrdersAsync(userId, isAdmin);
+```
+
+Après :
+
+```csharp
+[HttpGet]
+public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders()
+{
+    var currentUser = _currentUserService.GetCurrentUser();
+
+    var orders = await _orderService.GetAllOrdersAsync(
+        currentUser.Id,
+        currentUser.IsAdmin
+    );
+
+    return Ok(orders);
+}
+```
+
+Et le constructeur devient :
+
+```csharp
+private readonly IOrderService _orderService;
+private readonly ICurrentUserService _currentUserService;
+
+public OrderController(
+    IOrderService orderService,
+    ICurrentUserService currentUserService)
+{
+    _orderService = orderService;
+    _currentUserService = currentUserService;
+}
+```
+
+Ce code est meilleur parce qu’il raconte clairement ce qu’il fait :
+
+- je récupère l’utilisateur courant ;
+- j’appelle le service avec son identité métier ;
+- je renvoie le résultat.
+
+---
+
+# Partie C — Aller plus loin : autorisation métier propre
+
+## 15. Le vrai sujet : ce n’est pas seulement récupérer l’utilisateur
+
+Dans `GetOrderByIdAsync`, le service reçoit :
+
+```csharp
+GetOrderByIdAsync(int id, int userId, bool isAdmin)
+```
+
+Ce n’est pas catastrophique, mais ce n’est pas idéal.
+
+Pourquoi ?
+
+Parce qu’on transmet une règle sous forme de booléen.
+
+Un booléen comme `isAdmin` ne raconte pas toute l’intention métier.
+
+On pourrait améliorer progressivement avec :
+
+```csharp
+GetOrderByIdAsync(int id, CurrentUser currentUser)
+```
+
+Puis dans le service :
+
+```csharp
+if (!currentUser.IsAdmin && order.UserId != currentUser.Id)
+{
+    throw new ForbiddenException("Vous n'avez pas l'autorisation de voir cette commande.");
+}
+```
+
+L’avantage :
+
+- le service comprend qu’il travaille avec l’utilisateur courant ;
+- la règle d’accès est lisible ;
+- on peut ajouter d’autres propriétés plus tard sans changer toutes les signatures.
+
+---
+
+## 16. Attention à ne pas tout mettre dans le contrôleur
+
+Une tentation serait de faire :
+
+```csharp
+if (!currentUser.IsAdmin && order.UserId != currentUser.Id)
+    return Forbid();
+```
+
+Mais pour cela, le contrôleur doit charger la commande.
+
+Ce n’est pas son rôle.
+
+La règle :
+
+> “Un utilisateur ne peut accéder qu’à ses propres commandes”
+
+est une règle métier/application.
+
+Elle doit rester dans le service de commande.
+
+Le contrôleur ne doit pas devenir un deuxième service.
+
+---
+
+## 17. Correction de l’exception dans `ServiceOrder`
+
+Actuellement :
+
+```csharp
+if (!isAdmin && order.UserId != userId)
+{
+    throw new BadRequestException("Vous n'avez pas l'autorisation de voir cette commande.");
+}
+```
+
+À remplacer par :
+
+```csharp
+if (!currentUser.IsAdmin && order.UserId != currentUser.Id)
+{
+    throw new ForbiddenException("Vous n'avez pas l'autorisation de voir cette commande.");
+}
+```
+
+Pourquoi ?
+
+Parce que l’utilisateur est bien authentifié, mais la ressource ne lui appartient pas.
+
+C’est un `403 Forbidden`.
+
+---
+
+## 18. Faut-il renvoyer 403 ou 404 ?
+
+Question avancée intéressante.
+
+Quand un utilisateur demande :
+
+```http
+GET /api/order/42
+```
+
+et que la commande 42 existe mais appartient à quelqu’un d’autre, deux stratégies existent.
+
+### Option 1 — Renvoyer 403
+
+On dit clairement :
+
+> La commande existe peut-être, mais vous n’avez pas le droit.
+
+Avantage : simple à comprendre.
+
+Inconvénient : cela peut révéler qu’une ressource existe.
+
+### Option 2 — Renvoyer 404
+
+On répond :
+
+> Ressource introuvable.
+
+Même si elle existe, elle n’est pas visible pour cet utilisateur.
+
+Avantage : réduit l’énumération de ressources.
+
+Inconvénient : moins explicite en phase d’apprentissage.
+
+Pour ce projet **pédagogique**, je recommande :
+
+- utiliser `403 Forbidden` pour comprendre la différence entre authentification et autorisation ;
+- discuter ensuite du choix `404` dans des contextes plus sensibles.
+
+---
+
+# Partie D — Optimisation associée
+
+## 19. Les requêtes actuelles chargent parfois trop de données
+
+Dans `GetAllOrdersAsync` :
+
+```csharp
+List<Order> orders = await _context.Orders
+    .Include(o => o.User)
+    .ToListAsync();
+```
+
+Puis le code projette vers `OrderResponseDto`.
+
+Problème :
+
+- `Include(o => o.User)` charge l’utilisateur complet ;
+- mais le DTO n’utilise quasiment rien de `User` ;
+- EF suit les entités en mémoire par défaut ;
+- il n’y a pas de pagination.
+
+---
+
+## 20. Correction optimisée : projeter directement en DTO
+
+Au lieu de :
+
+```csharp
+var orders = await _context.Orders
+    .Include(o => o.User)
+    .ToListAsync();
+
+return orders.Select(o => new OrderResponseDto
+{
+    Id = o.Id,
+    OrderDate = o.OrderDate,
+    Status = o.Status,
+    TotalAmount = o.TotalAmount,
+    UserId = o.UserId
+}).ToList();
+```
+
+Préférer :
+
+```csharp
+var query = _context.Orders.AsNoTracking();
+
+if (!currentUser.IsAdmin)
+{
+    query = query.Where(o => o.UserId == currentUser.Id);
+}
+
+return await query
+    .OrderByDescending(o => o.OrderDate)
+    .Select(o => new OrderResponseDto
+    {
+        Id = o.Id,
+        OrderDate = o.OrderDate,
+        Status = o.Status,
+        TotalAmount = o.TotalAmount,
+        UserId = o.UserId
+    })
+    .ToListAsync();
+```
+
+Pourquoi c’est mieux ?
+
+- `AsNoTracking()` évite le suivi EF inutile pour une lecture ;
+- pas de `Include` inutile ;
+- la projection est traduite en SQL ;
+- on ne charge que les colonnes nécessaires ;
+- la règle admin/user reste lisible.
+
+---
+
+## 21. Ajouter la pagination
+
+Aujourd’hui, `GetAllOrders` peut renvoyer toutes les commandes.
+
+Ce n’est pas grave avec 10 lignes.
+
+C’est un problème avec 100 000 lignes.
+
+Signature possible :
+
+```csharp
+[HttpGet]
+public async Task<ActionResult<List<OrderResponseDto>>> GetAllOrders(
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 20)
+```
+
+Dans le service :
+
+```csharp
+page = Math.Max(page, 1);
+pageSize = Math.Clamp(pageSize, 1, 100);
+
+return await query
+    .OrderByDescending(o => o.OrderDate)
+    .Skip((page - 1) * pageSize)
+    .Take(pageSize)
+    .Select(o => new OrderResponseDto
+    {
+        Id = o.Id,
+        OrderDate = o.OrderDate,
+        Status = o.Status,
+        TotalAmount = o.TotalAmount,
+        UserId = o.UserId
+    })
+    .ToListAsync();
+```
+
+Pourquoi limiter `pageSize` ?
+
+Parce qu’un client malveillant pourrait demander :
+
+```http
+GET /api/order?pageSize=1000000
+```
+
+La pagination est donc à la fois :
+
+- une optimisation ;
+- une protection contre l’abus de ressources.
+
+---
+
+# Partie E — Exercice principal
+
+## 22. Objectif de l’exercice
+
+Vous devez remplacer la lecture manuelle des claims dans `OrderController` par une vraie abstraction d’utilisateur courant.
+
+Le but n’est pas seulement de faire passer le code.
+
+Le but est de comprendre :
+
+- comment ASP.NET Core transforme un JWT en `ClaimsPrincipal` ;
+- pourquoi les claims sont un détail technique ;
+- comment séparer authentification, autorisation et règles métier ;
+- pourquoi un accès interdit doit renvoyer `403` et pas `400` ;
+- pourquoi la sécurité ne doit pas être copiée-collée dans chaque action.
+
+---
+
+## 23. Tâches à réaliser
+
+### Niveau 1 — Compréhension
+
+Dans un fichier de notes, répondre aux questions :
+
+1. À quoi sert `[Authorize]` ?
+2. Quelle différence entre authentification et autorisation ?
+3. À quel moment ASP.NET Core remplit `HttpContext.User` ?
+4. Pourquoi un claim n’est pas directement une règle métier ?
+5. Quelle différence entre `401`, `403`, `404` et `400` ?
+
+---
+
+### Niveau 2 — Refactorisation
+
+Créer :
+
+- `CurrentUser` ;
+- `ICurrentUserService` ;
+- `CurrentUserService` ;
+- `UnauthorizedException` ;
+- `ForbiddenException`.
+
+Brancher :
+
+```csharp
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+```
+
+Mettre à jour :
+
+- `ExceptionMiddleware` ;
+- `OrderController` ;
+- `IOrderService` ;
+- `ServiceOrder`.
+
+---
+
+### Niveau 3 — Autorisation métier
+
+Modifier `GetOrderByIdAsync` pour que :
+
+- un admin puisse voir toutes les commandes ;
+- un utilisateur puisse voir seulement ses commandes ;
+- un utilisateur connecté mais non autorisé reçoive un `403 Forbidden`.
+
+---
+
+### Niveau 4 — Optimisation
+
+Modifier `GetAllOrdersAsync` pour :
+
+- utiliser `AsNoTracking()` ;
+- supprimer les `Include` inutiles ;
+- projeter directement vers `OrderResponseDto` ;
+- ajouter pagination `page` / `pageSize` ;
+- limiter `pageSize` à 100 maximum.
+
+---
+
+# Partie G — Tests à faire dans Swagger ou Scalar
+
+## 24. Tests fonctionnels
+
+### Test 1 — Requête sans token
+
+Appeler :
+
+```http
+GET /api/order
+```
+
+Résultat attendu :
+
+```http
+401 Unauthorized
+```
+
+---
+
+### Test 2 — Utilisateur connecté
+
+Se connecter avec un utilisateur simple.
+
+Appeler :
+
+```http
+GET /api/order
+```
+
+Résultat attendu :
+
+- uniquement ses commandes ;
+- pas celles des autres utilisateurs.
+
+---
+
+### Test 3 — Accès à une commande d’un autre utilisateur
+
+Avec un utilisateur simple, appeler :
+
+```http
+GET /api/order/{idDuneCommandeQuiNeLuiAppartientPas}
+```
+
+Résultat attendu :
+
+```http
+403 Forbidden
+```
+
+---
+
+### Test 4 — Admin
+
+Se connecter avec un admin.
+
+Appeler :
+
+```http
+GET /api/order
+```
+
+Résultat attendu :
+
+- toutes les commandes.
+
+---
+
+### Test 5 — Pagination abusive
+
+Appeler :
+
+```http
+GET /api/order?page=1&pageSize=100000
+```
+
+Résultat attendu :
+
+- l’API ne doit pas renvoyer 100000 éléments ;
+- `pageSize` doit être limité côté backend.
+
+---
+
+# Partie H — Autres points à corriger ensuite
+
+## 25. Cohérence des rôles
+
+Vérifier que le rôle est toujours écrit de la même manière :
+
+```csharp
+Admin
+```
+
+Éviter :
+
+```csharp
+admin
+ADMIN
+```
+
+Une meilleure pratique consiste à éviter les chaînes magiques :
+
+```csharp
+public static class Roles
+{
+    public const string Admin = "Admin";
+    public const string User = "User";
+}
+```
+
+Puis :
+
+```csharp
+[Authorize(Roles = Roles.Admin)]
+```
+
+---
+
+## 26. Secrets dans `appsettings.json`
+
+La clé JWT et la chaîne de connexion ne devraient pas être versionnées dans Git.
+
+À faire :
+
+- garder des placeholders dans `appsettings.json` ;
+- utiliser `dotnet user-secrets` en développement ;
+- utiliser des variables d’environnement en Docker / production.
+
+Exemple :
+
+```bash
+dotnet user-secrets set "Jwt:Key" "une-cle-longue-et-secrete"
+```
+
+---
+
+## 27. Transactions sur la création de commande
+
+La création de commande fait plusieurs opérations :
+
+- création de `Order` ;
+- création de plusieurs `OrderItem` ;
+- décrémentation de plusieurs stocks ;
+- sauvegarde finale.
+
+Il faut réfléchir à la transaction.
+
+Pourquoi ?
+
+Parce qu’une commande doit être atomique :
+
+> soit toute la commande est créée correctement, soit rien n’est créé.
+
+Avec EF Core, `SaveChangesAsync()` est transactionnel pour une seule sauvegarde, mais dès que le workflow devient plus complexe, il faut savoir expliciter la transaction.
+
+Exemple :
+
+```csharp
+await using var transaction = await _context.Database.BeginTransactionAsync();
+
+try
+{
+    // créer commande
+    // créer lignes
+    // décrémenter stock
+    await _context.SaveChangesAsync();
+
+    await transaction.CommitAsync();
+}
+catch
+{
+    await transaction.RollbackAsync();
+    throw;
+}
+```
+
+Ce n’est pas forcément à appliquer partout immédiatement, mais ils doivent comprendre le principe.
+
+---
+
+# Conclusion 
+
+Le vrai sujet de cette correction est architectural :
+
+> Une API sécurisée ne se contente pas de lire un token. Elle transforme ce token en identité claire, puis applique des règles d’autorisation explicites, centralisées et testables.
+
+La correction attendue ne doit donc pas être :
+
+```csharp
+int.TryParse(...)
+```
+
+mais plutôt :
+
+```text
+JWT validé par ASP.NET Core
+        ↓
+ClaimsPrincipal
+        ↓
+CurrentUserService
+        ↓
+CurrentUser métier
+        ↓
+Services applicatifs
+        ↓
+Règles métier d’autorisation
+        ↓
+Exceptions typées
+        ↓
+Middleware d’erreurs
+        ↓
+Réponse HTTP propre
+```
+
+C’est cette chaîne qui doit être comprise.
+
