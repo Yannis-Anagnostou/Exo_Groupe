@@ -1,4 +1,4 @@
-name: CI/CD OrderManagement ASP.NET Core 10
+name: CI Docker OrderManagement
 
 on:
   push:
@@ -7,41 +7,104 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  DOTNET_VERSION: '10.0.x'
-  SOLUTION_PATH: 'OrderManagement.slnx'
-  API_PROJECT_PATH: 'src/OrderManagement.API/OrderManagement.API.csproj'
-  PUBLISH_DIR: './publish'
-
 permissions:
   contents: read
 
 jobs:
-  ci:
+  docker-ci:
+    name: Build Docker and smoke test API
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Récupérer le code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Vérifier la configuration Docker Compose
+        run: docker compose config
 
-      - run: dotnet restore ${{ env.SOLUTION_PATH }}
-      - run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore
-      - run: dotnet test ${{ env.SOLUTION_PATH }} --configuration Release --no-build
-      - run: dotnet publish ${{ env.API_PROJECT_PATH }} --configuration Release --no-restore --output ${{ env.PUBLISH_DIR }}
+      - name: Construire l'image de l'API
+        run: docker compose build api
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ordermanagement-api-publish
-          path: ${{ env.PUBLISH_DIR }}
+      - name: Lancer SQL Server et l'API
+        run: docker compose up -d db api
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: ci
-    if: github.ref == 'refs/heads/main'
+      - name: Attendre que l'API réponde
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/api/Product > /dev/null; then
+              echo "API disponible"
+              exit 0
+            fi
 
-    steps:
-      - name: Déploiement simulé
-        run: echo "Déploiement de OrderManagement.API en production"
+            echo "API pas encore disponible, tentative $i/30"
+            docker compose ps
+            sleep 5
+          done
+
+          echo "L'API n'a pas répondu à temps"
+          docker compose logs db api
+          exit 1
+
+      - name: Smoke test endpoints métier publics
+        run: |
+          curl -fsS http://localhost:8080/api/Product
+          curl -fsS http://localhost:8080/api/Categories
+
+      - name: Afficher les logs en cas d'échec
+        if: failure()
+        run: docker compose logs db api
+
+      - name: Nettoyer les conteneurs
+        if: always()
+        run: docker compose down -v
+
+
+
+# V1 sans passer par docker
+# name: CI/CD OrderManagement ASP.NET Core 10
+
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
+#   workflow_dispatch:
+
+# env:
+#   DOTNET_VERSION: '10.0.x'
+#   SOLUTION_PATH: 'OrderManagement.slnx'
+#   API_PROJECT_PATH: 'src/OrderManagement.API/OrderManagement.API.csproj'
+#   PUBLISH_DIR: './publish'
+
+# permissions:
+#   contents: read
+
+# jobs:
+#   ci:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - uses: actions/checkout@v4
+
+#       - uses: actions/setup-dotnet@v5
+#         with:
+#           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+#       - run: dotnet restore ${{ env.SOLUTION_PATH }}
+#       - run: dotnet build ${{ env.SOLUTION_PATH }} --configuration Release --no-restore
+#       - run: dotnet test ${{ env.SOLUTION_PATH }} --configuration Release --no-build
+#       - run: dotnet publish ${{ env.API_PROJECT_PATH }} --configuration Release --no-restore --output ${{ env.PUBLISH_DIR }}
+
+#       - uses: actions/upload-artifact@v4
+#         with:
+#           name: ordermanagement-api-publish
+#           path: ${{ env.PUBLISH_DIR }}
+
+#   deploy:
+#     runs-on: ubuntu-latest
+#     needs: ci
+#     if: github.ref == 'refs/heads/main'
+
+#     steps:
+#       - name: Déploiement simulé
+#         run: echo "Déploiement de OrderManagement.API en production"
