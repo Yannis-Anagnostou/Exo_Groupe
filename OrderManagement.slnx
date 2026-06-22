@@ -5,4 +5,7 @@
     <Project Path="src/OrderManagement.Domain/OrderManagement.Domain.csproj" />
     <Project Path="src/OrderManagement.Infrastructure/OrderManagement.Infrastructure.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="Tests/Tests.csproj" Id="365e8931-b60b-45f7-8c76-73b7e80728cd" />
+  </Folder>
 </Solution>
