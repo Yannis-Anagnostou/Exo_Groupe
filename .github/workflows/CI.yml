@@ -57,6 +57,15 @@ jobs:
       - name: Nettoyer les conteneurs
         if: always()
         run: docker compose down -v
+  
+  deploy:
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Déploiement simulé
+        run: echo "Déploiement de OrderManagement.API en production"
 
 
 
