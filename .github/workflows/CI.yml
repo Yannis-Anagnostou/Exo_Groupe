@@ -19,6 +19,14 @@ jobs:
       - name: Récupérer le code
         uses: actions/checkout@v4
 
+      - name: Installer .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Lancer les tests xUnit
+        run: dotnet test Tests/Tests.csproj --configuration Release --verbosity normal
+
       - name: Vérifier la configuration Docker Compose
         run: docker compose config
 
